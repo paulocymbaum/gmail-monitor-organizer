@@ -8,6 +8,8 @@
     "test:unit": "node tests/sandbox.test.js",
     "test:integration": "node tests/integration.test.js",
     "test:local-model": "USE_LOCAL_MODEL=1 node tests/integration.test.js",
+    "tune:gates": "node tests/tune-gates.js",
+    "tune:tree": "node tests/tune-tree.js",
     "push": "cp appsscript.json src/appsscript.json && node -e \"const m=require('./appsscript.json'); if(!m.oauthScopes||!m.oauthScopes.length) { console.error('ABORT: manifest sem oauthScopes (clasp create sobrescreve?)'); process.exit(1); }\" && clasp push -f",
     "status": "clasp show-file-status",
     "open": "clasp open-script 2>/dev/null || node -e \"const c=require('./.clasp.json'); console.log('https://script.google.com/u/0/home/projects/'+c.scriptId+'/edit')\"",

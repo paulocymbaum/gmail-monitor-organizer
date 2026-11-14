@@ -46,35 +46,12 @@ const Utils = (function () {
     return d.toISOString();
   }
 
-  function isoNow() { return formatDate(new Date(), "yyyy-MM-dd'T'HH:mm:ssXXX"); }
-
   function log(msg) {
     try { console.log('GMO: ' + msg); } catch (e) { /* ignore */ }
   }
 
   function sleep(ms) {
     if (typeof Utilities !== 'undefined') Utilities.sleep(ms);
-  }
-
-  /**
-   * retryWithBackoff(fn, { retries, baseMs, isRetriable }) — used by EmbeddingClassifier
-   * and around flaky writes. Non-retriable errors rethrow immediately.
-   */
-  function retryWithBackoff(fn, opts) {
-    opts = opts || {};
-    const retries = opts.retries == null ? 2 : opts.retries;
-    const baseMs = opts.baseMs || 1000;
-    let lastErr = null;
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      if (attempt > 0) sleep(baseMs * Math.pow(2, attempt - 1));
-      try {
-        return fn();
-      } catch (e) {
-        lastErr = e;
-        if (opts.isRetriable && !opts.isRetriable(e)) throw e;
-      }
-    }
-    throw lastErr;
   }
 
   /**
@@ -178,10 +155,8 @@ const Utils = (function () {
     matchesDomain: matchesDomain,
     truncate: truncate,
     formatDate: formatDate,
-    isoNow: isoNow,
     log: log,
     sleep: sleep,
-    retryWithBackoff: retryWithBackoff,
     driveJsonGet: driveJsonGet,
     driveJsonPut: driveJsonPut,
   };

@@ -20,12 +20,17 @@ Distinto de `newsletters` (marketing de plataforma — priority 6), de `finance`
 ## Detection patterns
 
 **Domains (rule):** `stripo.email`, `notifications.stripo.email`, `duocards.com`,
-`accounts.google.com`, `whatsnew.sider.ai`, `doppler.com`, `lottiefiles.com`,
-`flutterflow.io`, `mermaid.ai`, `supabase.com`, `render.com`, `po.atlassian.net`,
+`accounts.google.com`, `whatsnew.sider.ai`, `lottiefiles.com`,
+`flutterflow.io`, `mermaid.ai`, `po.atlassian.net`,
 `account.live.com` (Microsoft), `id.apple.com` (Apple ID), `dropbox.com`,
 `canva.com` (Canva), `duolingo.com` (Duolingo),
 `adobe.com` (Adobe ID), `playstation.com` (PlayStation PSN),
 `epicgames.com` (Epic Games), `xbox.com` (Xbox/Microsoft).
+
+> **Movidos para `work`** (expansão AI full-stack): `doppler.com`, `supabase.com`,
+> `render.com` — plataformas de dev-stack pertencem à categoria de trabalho;
+> alertas de segurança/login DESSES serviços continuam aqui via keywords
+> (`security alert`, `new login to your account` …), que têm precedência.
 
 **Keywords (rule):** `account deletion`, `will be deleted`, `conta será deletada`,
 `conta será excluída`, `manutenção programada`, `scheduled maintenance`,

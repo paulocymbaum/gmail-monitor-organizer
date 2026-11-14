@@ -2,22 +2,16 @@
  * Categorizer.gs — hybrid engine (ARCHITECTURE.md §4.4).
  * Resolution order: sender cache → rules → DecisionTree (similarity-confirmed)
  *   → embedding classifier → fallback.
- * Tree/embedding verdicts are cached per sender; fallback is never cached (so a
- * later API key, new rule or retrained tree gets a fresh chance next run).
+ * Tree/embedding verdicts are cached per sender with a TTL
+ * (CONFIG.senderCacheTtlDays — expired entries get a fresh chance with the
+ * current model); fallback is never cached (so a later API key, new rule or
+ * retrained tree gets a fresh chance next run).
  * Every verdict carries needsReview — true when it cleared the acceptance
  * gates but sits in a low-confidence band (CONFIG.needsReview) or fell back —
  * which the Labeler turns into the GMO/needs-review tag: the tag IS the
  * system's ongoing precision metric (needsReviewReport()).
  */
 const Categorizer = (function () {
-
-  /** Legacy cache entries are plain strings; new ones are {c, nr} pairs. */
-  function normalizeCacheEntry(cached) {
-    if (cached && typeof cached === 'object') {
-      return { category: cached.c, needsReview: !!cached.nr };
-    }
-    return { category: cached, needsReview: false };
-  }
 
   /**
    * Precision flag: verdicts that cleared the acceptance gates but land in a
@@ -40,12 +34,21 @@ const Categorizer = (function () {
 
   function classify(msg) {
     const email = String(msg.email || '').toLowerCase();
-    const cached = State.getSenderCache()[email];
-    if (cached) {
-      const entry = normalizeCacheEntry(cached);
-      return { category: entry.category, source: 'cache', needsReview: entry.needsReview };
+    const hit = State.lookupSender(email);   // TTL-enforced (expired → null)
+    if (hit) {
+      return { category: hit.category, source: 'cache', needsReview: hit.needsReview };
     }
-    return resolveAndCache(msg);
+    const stale = State.peekSender(email);   // entrada expirada (tinha categoria antes)
+    const verdict = resolveAndCache(msg);
+    if (verdict.source === 'fallback' && stale && stale.category &&
+        stale.category !== FALLBACK_CATEGORY.id) {
+      // Entrada expirada + sem veredito melhor agora (ex.: cota de embeddings
+      // esgotada): mantém a categoria ANTIGA, marcada needs-review — o modelo
+      // mais novo re-avalia no próximo TTL. Nunca degrada para uncategorized.
+      State.cacheSender(email, stale.category, true);
+      return { category: stale.category, source: 'cache', needsReview: true };
+    }
+    return verdict;
   }
 
   /**

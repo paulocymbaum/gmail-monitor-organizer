@@ -37,7 +37,12 @@ const { MOCK_EMAILS_19 } = require('./mock-dataset-19.js');
 const { MOCK_EMAILS_20 } = require('./mock-dataset-20.js');
 const { MOCK_EMAILS_21 } = require('./mock-dataset-21.js');
 const { MOCK_EMAILS_22 } = require('./mock-dataset-22.js');
-const ALL_MOCKS = MOCK_EMAILS.concat(MOCK_EMAILS_EXTRA).concat(MOCK_EMAILS_3).concat(MOCK_EMAILS_4).concat(MOCK_EMAILS_5).concat(MOCK_EMAILS_6).concat(MOCK_EMAILS_7).concat(MOCK_EMAILS_8).concat(MOCK_EMAILS_9).concat(MOCK_EMAILS_10).concat(MOCK_EMAILS_11).concat(MOCK_EMAILS_12).concat(MOCK_EMAILS_13).concat(MOCK_EMAILS_14).concat(MOCK_EMAILS_15).concat(MOCK_EMAILS_16).concat(MOCK_EMAILS_17).concat(MOCK_EMAILS_18).concat(MOCK_EMAILS_19).concat(MOCK_EMAILS_20).concat(MOCK_EMAILS_21).concat(MOCK_EMAILS_22); // ~785 samples total
+const { MOCK_EMAILS_23 } = require('./mock-dataset-23.js');
+const { MOCK_EMAILS_24 } = require('./mock-dataset-24.js');
+const { MOCK_EMAILS_25 } = require('./mock-dataset-25.js');
+const { MOCK_EMAILS_26 } = require('./mock-dataset-26.js');
+const { MOCK_EMAILS_27 } = require('./mock-dataset-27.js');
+const ALL_MOCKS = MOCK_EMAILS.concat(MOCK_EMAILS_EXTRA).concat(MOCK_EMAILS_3).concat(MOCK_EMAILS_4).concat(MOCK_EMAILS_5).concat(MOCK_EMAILS_6).concat(MOCK_EMAILS_7).concat(MOCK_EMAILS_8).concat(MOCK_EMAILS_9).concat(MOCK_EMAILS_10).concat(MOCK_EMAILS_11).concat(MOCK_EMAILS_12).concat(MOCK_EMAILS_13).concat(MOCK_EMAILS_14).concat(MOCK_EMAILS_15).concat(MOCK_EMAILS_16).concat(MOCK_EMAILS_17).concat(MOCK_EMAILS_18).concat(MOCK_EMAILS_19).concat(MOCK_EMAILS_20).concat(MOCK_EMAILS_21).concat(MOCK_EMAILS_22).concat(MOCK_EMAILS_23).concat(MOCK_EMAILS_24).concat(MOCK_EMAILS_25).concat(MOCK_EMAILS_26).concat(MOCK_EMAILS_27); // ~1294 samples total
 
 // ── local embedding model support (TEST-ONLY, offline after first download) ──
 const USE_LOCAL_MODEL = process.env.USE_LOCAL_MODEL === '1';

@@ -11,6 +11,7 @@ const CONFIG = {
   processedLabel: 'GMO/Processed',
   needsReviewLabel: 'GMO/needs-review',
   searchHorizonDays: 3,          // max lookback per run (safety net)
+  dailyEmailLimit: 200,          // hard cap: threads (re)classified per calendar day, across runs
   batchSize: 25,                 // threads fetched per GmailApp.search call
   maxRuntimeMs: 4.5 * 60 * 1000, // self-limit under the 6-min execution cap
   maxBatchesPerRun: 40,          // hard ceiling per invocation (40 × batchSize threads)
@@ -20,7 +21,8 @@ const CONFIG = {
     labelChunkSize: 10,          // threads per label chunk (3 addLabel calls per thread)
     labelChunkDebounceMs: 400,   // cooldown between label chunks (write phase)
   },
-  triggerMinutes: 60,            // trigger cadence; 60 → hourly (Apps Script allows 1,5,10,15,30,60)
+  triggerMinutes: 1440,          // trigger cadence: 1440 = every 24 h (daily @ triggerHour); 60 = hourly; ≥1440 → everyDays
+  triggerHour: 6,                // hour of day for daily (≥1440 min) triggers — script timezone
   decisionTree: {
     minConfidence: 0.85,         // below this → defer downstream
     modelSource: 'TreeModel.gs', // or 'drive:tree-model-trained.json'
@@ -35,6 +37,19 @@ const CONFIG = {
     maxDepth: 6,                 // ID3 depth cap
     minSamplesNode: 6,           // don't split below this sample count
     minSamplesTotal: 30,         // refuse to train below this total
+    // Weekly in-script tuner (Tuner.gs): CV grid-search over tree hyper-
+    // parameters using the TAGGED mailbox as corpus. Runs inside one
+    // execution's time budget; a paused sweep resumes next run via cursor.
+    tune: {
+      folds: 4,                  // stratified CV folds per shape
+      corpusTtlDays: 7,          // Drive-cached corpus older than this → recollect
+      corpusBudgetMs: 90000,     // Gmail time slice for corpus collection
+      depthCandidates: [4, 5, 6, 7, 8],
+      minNodeCandidates: [3, 5, 8, 12, 20],
+      confCandidates: [0.75, 0.80, 0.85, 0.90], // swept free (no retrain)
+      autoApply: false,          // true → activate tuned tree when it beats the champion
+      autoApplyMinGainPp: 0.5,   // required CV-accuracy gain (pp) vs current model
+    },
   },
   embedding: {
     model: 'gemini-embedding-001', // text-embedding-004 was retired by Google (404 NOT_FOUND)
@@ -69,7 +84,11 @@ const CONFIG = {
                                // (grid: era 0.15)
     reprocessBatch: 20,        // needs-review threads re-triaged per run/invocação
   },
+  uncategorized: {
+    reprocessBatch: 20,        // uncategorized threads re-triaged per run/invocação
+  },
   senderCacheMaxBytes: 8000,     // prune SENDER_CACHE near the 9KB property limit
+  senderCacheTtlDays: 30,        // sender verdicts older than this expire (0 = keep forever)
 };
 
 const CATEGORIES = [
@@ -154,9 +173,9 @@ const CATEGORIES = [
   { id: 'servicos',
     rules: { domains: ['stripo.email', 'notifications.stripo.email',
                        'duocards.com', 'accounts.google.com',
-                       'whatsnew.sider.ai', 'doppler.com',
+                       'whatsnew.sider.ai',
                        'lottiefiles.com', 'flutterflow.io', 'mermaid.ai',
-                       'supabase.com', 'render.com', 'po.atlassian.net',
+                       'po.atlassian.net',
                        'account.live.com', 'id.apple.com', 'dropbox.com',
                        'canva.com', 'duolingo.com',
                        'adobe.com', 'playstation.com', 'epicgames.com',
@@ -254,16 +273,41 @@ const CATEGORIES = [
                        'twitch.tv', 'threads.net', 'bsky.app', 'kwai.com',
                        'vimeo.com'],
              keywords: [] } },
-  // 13 — evaluated last so precise categories win first
+  // 13 — evaluated last so precise categories win first. Full-stack + AI/LLM
+  // platform domains (GitHub/GitLab, Ollama, Anthropic/Claude, OpenAI, Redis,
+  // Doppler, Supabase …): matchesDomain accepts subdomains, so base domains
+  // cover notifications.* / email.* senders. NOTE: security alerts &
+  // maintenance notices from these platforms keep landing in `servicos`
+  // (evaluated earlier) — this expansion only claims mail servicos/newsletters
+  // don't match first.
   { id: 'work',
     rules: { domains: ['slack.com', 'zoom.us', 'notion.so', 'atlassian.com',
                        'asana.com', 'trello.com', 'figma.com', 'github.com',
                        'gitlab.com', 'miro.com', 'linear.app', 'dropbox.com',
                        'vercel.com',
                        'totvs.com.br', 'salesforce.com', 'zendesk.com',
-                       'jetbrains.com'],
+                       'jetbrains.com',
+                       // AI / LLM platforms
+                       'anthropic.com', 'openai.com', 'ollama.com',
+                       'huggingface.co', 'mistral.ai', 'groq.com',
+                       'together.ai', 'cohere.com', 'perplexity.ai',
+                       'langchain.dev', 'replicate.com', 'cursor.com',
+                       'cursor.sh', 'deepseek.com', 'x.ai',
+                       'elevenlabs.io', 'midjourney.com', 'modal.com',
+                       'runpod.io', 'nvidia.com',
+                       // Data / infra / full-stack services
+                       'redis.com', 'redis.io', 'upstash.io', 'doppler.com',
+                       'supabase.com', 'mongodb.com', 'neon.tech',
+                       'planetscale.com', 'sentry.io', 'cloudflare.com',
+                       'netlify.com', 'railway.app', 'fly.io', 'render.com',
+                       'digitalocean.com', 'npmjs.com', 'docker.com',
+                       'circleci.com', 'twilio.com', 'auth0.com',
+                       'elastic.co', 'datadoghq.com', 'grafana.com',
+                       'hashicorp.com', 'prisma.io', 'postman.com',
+                       'replit.com'],
              keywords: ['deadline', 'meeting', 'sprint', 'ticket',
-                        'pull request', 'code review'] } },
+                        'pull request', 'code review',
+                        'merge request', 'deployment'] } },
 ];
 
 const FALLBACK_CATEGORY = { id: 'uncategorized' };

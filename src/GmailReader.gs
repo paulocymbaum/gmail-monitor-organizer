@@ -18,17 +18,22 @@ const GmailReader = (function () {
     opts = opts || {};
     const now = Date.now();
     const dayMs = 24 * 60 * 60 * 1000;
-    const horizonMs = CONFIG.searchHorizonDays * dayMs;
-    let base;
-    if (opts.days) {
-      base = now - opts.days * dayMs;
-    } else if (cursorMs > 0) {
-      base = Math.max(cursorMs - dayMs, now - horizonMs); // 1-day overlap
-    } else {
-      base = now - horizonMs;
+    // fullScan → SEM cláusula after:: a fila é o mailbox INTEIRO (sem limite de
+    // data) — eventualmente todo e-mail é avaliado, do mais novo ao mais antigo.
+    let dateClause = '';
+    if (!opts.fullScan) {
+      let base;
+      const horizonMs = CONFIG.searchHorizonDays * dayMs;
+      if (opts.days) {
+        base = now - opts.days * dayMs;
+      } else if (cursorMs > 0) {
+        base = Math.max(cursorMs - dayMs, now - horizonMs); // 1-day overlap
+      } else {
+        base = now - horizonMs;
+      }
+      dateClause = ' after:' + Utils.formatDate(new Date(base), 'yyyy/MM/dd');
     }
-    const dateStr = Utils.formatDate(new Date(base), 'yyyy/MM/dd');
-    return '-in:spam -in:trash -label:' + CONFIG.processedLabel + ' after:' + dateStr;
+    return '-in:spam -in:trash -label:' + CONFIG.processedLabel + dateClause;
   }
 
   function countAddresses(s) {

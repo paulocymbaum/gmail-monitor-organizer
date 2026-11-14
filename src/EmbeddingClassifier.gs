@@ -30,7 +30,7 @@ const EmbeddingClassifier = (function () {
   const PROTO_FILE = 'embedding-prototypes.json';
   let prototypesCache = null;
 
-  // Modo fila (queue429/backfillFila): em 429, espera a janela de RPM e repete
+  // Modo fila (queue429/runFullFlow): em 429, espera a janela de RPM e repete
   // o MESMO pedido sem consumir tentativas; se esgotar a paciência (maxWaits),
   // sinaliza rateExhausted para o pipeline pausar a fila SEM marcar as threads.
   let ratePatience = false;

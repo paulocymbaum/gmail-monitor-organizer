@@ -58,7 +58,7 @@ label so runs are **idempotent**.
 | 1 | **Hybrid categorization** — deterministic rules first, free embedding similarity only for senders with no matching rule | Fast, predictable for the bulk of mail; the free embedding model is consulted only for unknown senders |
 | 2 | **Gmail labels as markers** — `GMO/<category>` nested labels applied to every processed thread | The mailbox itself is the storage; searchable, filterable, and zero external data |
 | 3 | **Label-only persistence** — no spreadsheet or database | Verdicts persist in the per-sender cache; markers are labels alone; idempotent relabeling keeps retries safe |
-| 4 | **Sender-level category cache** in `PropertiesService` | the embedding model is consulted **once per unknown sender**, ever — not once per message |
+| 4 | **Sender-level category cache** in `PropertiesService` | the embedding model is consulted **once per unknown sender per TTL** (`CONFIG.senderCacheTtlDays`, default 30 days) — not once per message |
 | 5 | **Gmail label `GMO/Processed`** as the "done" marker | Robust idempotency that survives trigger retries and partial failures |
 | 6 | **Config in `Config.gs` + Script Properties** | Categories/rules are editable code; secrets (API key) and mutable state live in Script Properties, never in source |
 | 7 | **Time-budget guard + paced batches in the orchestrator** | Apps Script executions cap at 6 min; the run saves its cursor and exits before the cap, resuming next trigger. Each run walks unlabeled threads newest-first, repaging from offset 0 (labeled mail leaves the result set), with configurable debounces between the fetch/classify/label phases and chunked label writes |
@@ -108,10 +108,11 @@ Main ──▶ Trainer ─────▶ GmailReader (extract) + DecisionTree (
 
 ### 4.1 `Main.gs` — Orchestrator
 
-Single public entry point wired to the trigger:
+Entry points wired to the trigger / editor (`processNewEmails` and
+`runFullFlow` run in QUEUE MODE — the unlabeled set is a persistent backlog):
 
 ```js
-function processNewEmails() { ... }
+function processNewEmails() { ... }   // runPipeline({ queue429: true })
 ```
 
 Responsibilities:
@@ -121,6 +122,13 @@ Responsibilities:
 3. **Fetch phase** — `GmailReader.fetchBatch(query, 0, seen)` fetches a batch of
    `CONFIG.batchSize` unlabeled threads, **newest first** (Gmail search order),
    then debounces (`pacing.fetchDebounceMs`).
+3b. **Backlog expansion** — with `expandBacklog` (trigger / `runFullFlow`), an
+   empty fetch does NOT end the run: it switches to a **full-history scan**
+   (query with no `after:` clause) — same queue of batches, same debounces,
+   repeating after every batch — until every e-mail is evaluated or a 429
+   pauses the queue. A **daily cap** (`CONFIG.dailyEmailLimit`, 200 threads
+   (re)classified per calendar day, persistent across runs) stops the run
+   before fetching more; the queue persists for tomorrow.
 4. **Classify phase** — rule → tree → embedding per record, debounced before
    mutating (`pacing.classifyDebounceMs`).
 5. **Label phase** — `Labeler.applyToBatch` writes `GMO/<category>` +
@@ -134,36 +142,65 @@ Responsibilities:
 7. If the time budget is exhausted mid-run, exit cleanly and **keep the cursor**
    (`LAST_RUN` only advances after a complete run); the window is re-scanned by
    the next trigger invocation (already-labeled threads are skipped).
-8. Log a run summary (labeled / flagged for review / skipped / batches / verdict sources).
+8. **Re-triage cards — the END of the queue, OLDEST-FIRST, in this order** —
+   only with the new-mail queue drained (no budget exit, no quota pause) and
+   under the daily cap (`CONFIG.dailyEmailLimit`) and budget left:
+   1. needs-review re-triage, oldest-first (`CONFIG.needsReview.reprocessBatch`) →
+   2. uncategorized re-triage, oldest-first
+   (`CONFIG.uncategorized.reprocessBatch`) →
+   3. `reprocessProcessed` backlog continuation (fingerprint-gated,
+   oldest-first in `older_than` buckets — 2y → 1y → 6m → 3m → 1m → no limit —
+   cursor (bucket, offset) resumable across triggers, 200-thread steps) until
+   the model is up to date. New mail always outranks the reprocess backlog.
+9. Log a run summary (labeled / flagged / skipped / batches / verdict sources /
+   full-history scan / daily cap / reprocess progress).
 
 Also exposes maintenance entry points:
 - `setupTrigger()` — idempotently (re)install the time-driven trigger using
-  `CONFIG.triggerMinutes` (≥60 → hourly via `everyHours`, below → snapped to
-  the 1/5/10/15/30-min steps Apps Script accepts).
+  `CONFIG.triggerMinutes`. ≥1440 → `everyDays` at `CONFIG.triggerHour` (the
+  every-24-h default; `everyHours` caps at 23 h, so 24 h must land here);
+  60–1439 → `everyHours` (clamped to 1–23); below → `everyMinutes`, which only
+  accepts 1/5/10/15/30 — snapped to the **nearest valid step** (the old
+  arithmetic snap could yield invalid 20/25, which made `create()` throw and
+  left **no trigger installed**).
 - `bootstrapLabels()` — idempotently create every `GMO/<category>` label plus
   `GMO/Processed` and `GMO/needs-review`.
 - `backfill(days)` — one-off manual run over the last *N* days.
-- `backfillFila(days)` — backfill em MODO FILA: 429 → espera a janela de RPM
-  (`rateWindowWaitMs`) e repete o lote (até `queue429MaxWaits` esperas);
-  cota esgotada → pausa sem marcar as threads (continuam na fila para a
-  próxima execução do trigger, ou rodando o comando de novo).
+- `runFullFlow(days)` — O FLUXO COMPLETO (default 30 dias), sempre nesta ordem:
+  1. mail novo sem categoria (modo fila: 429 → espera a janela de RPM
+  `rateWindowWaitMs` e repete o lote, até `queue429MaxWaits` esperas; cota
+  esgotada → pausa sem marcar as threads, que continuam na fila) →
+  2. needs-review → 3. uncategorized → 4. processed (os cards no fim da fila,
+  com o orçamento restante). O trigger diário `processNewEmails` roda no
+  mesmo modo fila e com a mesma expansão de backlog.
 - `needsReviewReport()` — precision metric: counts `GMO/needs-review` vs
   `GMO/Processed` threads overall and per category (precision proxy =
   1 − flag rate) and logs a per-category table.
 - `reprocessNeedsReview(max)` — re-triage `GMO/needs-review` threads with the current
   model (sender cache bypassed via `Categorizer.classifyFresh`): confident re-verdicts
   swap category labels, drop `GMO/needs-review` and keep `GMO/Processed`; uncertain
-  ones keep the tag. Also runs automatically at the end of every pipeline pass
-  (capped by `CONFIG.needsReview.reprocessBatch`, budget-guarded).
+  ones keep the tag. Also runs automatically at the END of the queue — after
+  the new-mail queue drains, budget-guarded (capped by
+  `CONFIG.needsReview.reprocessBatch`).
+- `retriageUncategorized(max)` — re-triagem do bucket `GMO/uncategorized` (sem
+  a tag needs-review) com o modelo atual: veredito confiante troca a label e
+  mantém `GMO/Processed`; sem veredito confiante, a thread fica onde está
+  (uncategorized não é erro). Roda automaticamente como card 2 do fim da fila
+  (capped por `CONFIG.uncategorized.reprocessBatch`).
 - `reprocessProcessed(maxThreads)` — batch de re-triagem dos **JÁ PROCESSADOS** com o
   modelo atual (retomável): percorre `label:GMO/Processed` por offset cursor, roda
   `classifyFresh` em cada thread, troca a label de categoria quando o veredito muda e
   sincroniza `GMO/needs-review` com o novo veredito. Proteções: fallback nunca rebaixa
   um thread categorizado (skip); cota esgotada pausa SEM avançar o cursor; budget de
-  tempo por invocação. Ao completar a fila, grava o fingerprint do modelo
-  (`REPROCESS_FINGERPRINT`) e zera o cursor.
+  tempo por invocação (a passada automática recebe o orçamento RESTANTE do
+  run). Ao completar a fila, grava o fingerprint do modelo
+  (`REPROCESS_FINGERPRINT`) e zera o cursor. **Roda automaticamente no FIM da
+  fila** do runPipeline: quando o fingerprint mudou (ou um cursor ficou pelo
+  caminho), o trigger continua o backlog em passos de 200 com o orçamento
+  restante — o que não couber segue para a próxima execução.
 - `reprocessProcessedStatus()` — progresso do batch (cursor) e se o modelo mudou desde
-  a última passada completa (o pipeline avisa no log quando está pendente).
+  a última passada completa (o pipeline executa os cards no fim da fila e avisa
+  no log quando algo fica pendente).
 - `analyzeUncategorized(maxEmbeds)` — diagnóstico do bucket uncategorized: agrupa
   por domínio, sugere a categoria mais próxima via embedding (limitado a
   `maxEmbeds`) e aponta quais domínios promover a regras para reduzir o volume.
@@ -281,7 +318,7 @@ Rule semantics (evaluated top-down, first match wins):
 Resolution order per message:
 
 ```
-1. Sender cache (Script Property senderCache: {addr: {c, nr}})   ← O(1), free
+1. Sender cache (Script Property senderCache: {addr: {c, nr, t}}) ← O(1), free, TTL'd
 2. Rule engine   (domain match, then keyword match, first category wins)
 3. DecisionTree  (local JSON-model inference, similarity-confirmed; skipped if no model)
 4. EmbeddingClassifier  (free text-embedding similarity; nearest category centroid)
@@ -289,7 +326,9 @@ Resolution order per message:
 ```
 
 - After a tree/embedding verdict (or fallback) for an address, the result is written to the
-  sender cache, so steps 3–5 happen **once per address** for the account's lifetime.
+  sender cache, so steps 3–5 happen **once per address per TTL**
+  (`CONFIG.senderCacheTtlDays`, default 30 days — expired verdicts get a fresh
+  chance with the current model).
 - Cache shape guard: sender cache is pruned when it approaches the 9 KB per-property
   limit; long-term memory is effectively the labels themselves.
 - Verdict **source** (`rule` | `tree` | `embedding` | `fallback`) is logged per message.
@@ -378,6 +417,18 @@ when it is sure**.
    `GMO/<category>` labels), trains a small tree within the 6-minute budget, and
    exports the JSON. Practical flywheel: the system marks its own training set as
    it runs.
+4. **Tuned weekly in-script** — `Tuner.gs::runWeeklyTuner()` (opt-in weekly
+   trigger via `setupWeeklyTuner()`) adds the hyperparameter search ON TOP of
+   source 3: corpus = the tagged mailbox (Drive-cached, 7-day TTL, features
+   built locally → zero embedding quota); bounded rotating ladder of
+   `maxDepth × minSamplesNode` shapes with stratified-CV validation and a FREE
+   `minConfidence` sweep; time-guarded under the 6-minute cap with a
+   `TUNER_CURSOR` property so a paused sweep resumes on the next run. The best
+   combo is retrained on the full corpus, compared against the champion on the
+   same corpus and saved as `tree-model-tuned.json`; activation is manual or
+   gated by `CONFIG.trainer.tune.autoApply` (default false) + `≥ +0.5pp` CV
+   gain, applied via the `TREE_MODEL_SOURCE` property override honored by
+   `DecisionTree.loadModel()` — no code edits needed.
 
 **Failure behavior:** missing/malformed model → the tier is skipped silently; rules
 and embeddings still classify everything.
@@ -401,7 +452,8 @@ Generative Language API key (`GEMINI_API_KEY`).
   best − runner-up ≥ `minMargin` (0.03) → verdict; otherwise `null` → uncategorized
   (+ `GMO/needs-review`).
 - **Modo fila (patience)** — `setRatePatience(true)` (ativado por
-  `runPipeline({queue429:true})` / `backfillFila`): em 429, espera a janela de
+  `runPipeline({queue429:true})` / `runFullFlow` — o trigger horário
+  (`processNewEmails`) roda nesse modo): em 429, espera a janela de
   RPM (`rateWindowWaitMs`, 45s) e repete o MESMO request **sem consumir
   tentativas**, até `queue429MaxWaits` (6) esperas; esgotou → `rateExhausted()`
   sinaliza e o pipeline pausa a fila **sem marcar as threads** — elas continuam
@@ -445,17 +497,18 @@ All durable state goes through `PropertiesService.getScriptProperties()`:
 |-----|---------|---------------|
 | `GEMINI_API_KEY` | API key (user-entered once) | — |
 | `LAST_RUN` | ISO timestamp cursor | small |
-| `SENDER_CACHE` | JSON `{address: categoryId}` | pruned near 8 KB |
+| `SENDER_CACHE` | JSON `{address: {c, nr, t}}` — verdict + flag + epoch-ms stamp | TTL (default 30 days) + pruned near 8 KB |
+| `DAILY_USAGE` | JSON `{d, n}` — threads (re)classified today (limit `CONFIG.dailyEmailLimit`) | auto-resets at midnight |
+| `REPROCESS_OFFSET` / `REPROCESS_BUCKET` | re-triage cursor: page offset within the current `older_than` bucket | reset on sweep completion |
 
-`CacheService` is used only as a short-lived memo inside a single run; durable state is
+Run-scoped memos are plain in-memory variables (`State.memo`,
+`EmbeddingClassifier.prototypesCache`) — `CacheService` is not used; durable state is
 always Script Properties.
 
 ### 4.9 `Utils.gs`
 
 - `parseFromHeader(raw)` → `{name, email}`
-- `retryWithBackoff(fn, {retries, baseMs})` — used by EmbeddingClassifier and around
-  flaky network calls
-- `isoNow()`, `truncate(str, n)`, structured `log()` wrapper writing to
+- `truncate(str, n)`, structured `log()` wrapper writing to
   Cloud Logging (`console.log`) with a `GMO` prefix for filtering in execution logs.
 
 ---
@@ -537,7 +590,7 @@ re-classify from the sender cache and re-label safely, with no duplicates or spa
 | Limit | Value | Mitigation |
 |-------|-------|-----------|
 | Script runtime per execution | 6 min | time-budget guard at ~4.5 min + cursor resume |
-| Triggers total runtime | 90 min/day | hourly trigger ≈ ≤ 15 runs × ≤ 6 min worst case |
+| Triggers total runtime | 90 min/day | daily trigger: 1 run × ≤ 6 min worst case — ample headroom |
 | Gmail read operations | 20,000/day | batched `search`; cursor limits scope per run |
 | UrlFetch calls | 20,000/day | tree handles most senders locally; 1 call per remaining sender (cached) |
 | Properties value size | 9 KB/value, 500 KB total | sender-cache pruning |

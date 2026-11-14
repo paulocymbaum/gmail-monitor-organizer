@@ -63,7 +63,10 @@ const DecisionTree = (function () {
     if (modelLoaded) return modelCache;
     modelLoaded = true;
     try {
-      const src = CONFIG.decisionTree.modelSource || 'TreeModel.gs';
+      // Weekly Tuner can activate a validated tree WITHOUT code edits via the
+      // TREE_MODEL_SOURCE property override (CONFIG remains the fallback).
+      const src = State.get('TREE_MODEL_SOURCE', '') ||
+                  CONFIG.decisionTree.modelSource || 'TreeModel.gs';
       if (src === 'TreeModel.gs') {
         modelCache = (typeof TREE_MODEL !== 'undefined') ? TREE_MODEL : null;
       } else if (src.indexOf('drive:') === 0) {

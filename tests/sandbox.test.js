@@ -12,7 +12,7 @@ const vm = require('vm');
 
 const FILES = ['Config.gs', 'Utils.gs', 'State.gs', 'EmbeddingClassifier.gs',
                'DecisionTree.gs', 'TreeModel.gs', 'GmailReader.gs',
-               'Categorizer.gs', 'Labeler.gs', 'Trainer.gs', 'Main.gs'];
+               'Categorizer.gs', 'Labeler.gs', 'Trainer.gs', 'Tuner.gs', 'Main.gs'];
 
 let source = FILES.map(function (f) {
   return fs.readFileSync(path.join(__dirname, '..', 'src', f), 'utf8');
@@ -20,11 +20,15 @@ let source = FILES.map(function (f) {
 
 source += '\n;globalThis.__x = { CONFIG, CATEGORIES, FALLBACK_CATEGORY, Utils, State,' +
           ' EmbeddingClassifier, DecisionTree, GmailReader, Categorizer, Labeler, Trainer,' +
-          ' runPipeline: runPipeline, setupTrigger: setupTrigger,' +
-          ' needsReviewReport: needsReviewReport, retriageNeedsReview: retriageNeedsReview,' +
-          ' reprocessNeedsReview: reprocessNeedsReview, reprocessProcessed: reprocessProcessed,' +
+          ' Tuner,' +
+          ' runPipeline: runPipeline, setupTrigger: setupTrigger, processNewEmails: processNewEmails,' +
+          ' runReprocessCards: runReprocessCards,' +
+          ' needsReviewReport: needsReviewReport, reprocessNeedsReview: reprocessNeedsReview,' +
+          ' retriageUncategorized: retriageUncategorized, reprocessProcessed: reprocessProcessed,' +
           ' reprocessProcessedStatus: reprocessProcessedStatus,' +
-          ' analyzeUncategorized: analyzeUncategorized };';
+          ' runFullFlow: runFullFlow, analyzeUncategorized: analyzeUncategorized,' +
+          ' runWeeklyTuner: runWeeklyTuner, tunerStatus: tunerStatus,' +
+          ' setupWeeklyTuner: setupWeeklyTuner, removeWeeklyTuner: removeWeeklyTuner };';
 
 const sleepLog = [];        // every Utilities.sleep(ms) recorded here
 const searchCalls = [];     // { offset, max } per GmailApp.search call
@@ -53,8 +57,11 @@ const ctx = {
       const i = triggerRec.list.indexOf(t);
       if (i >= 0) triggerRec.list.splice(i, 1);
     },
+    WeekDay: { MONDAY: 'MONDAY', TUESDAY: 'TUESDAY', WEDNESDAY: 'WEDNESDAY',
+               THURSDAY: 'THURSDAY', FRIDAY: 'FRIDAY', SATURDAY: 'SATURDAY',
+               SUNDAY: 'SUNDAY' },
     newTrigger: function (fn) {
-      const t = { handler: fn, hours: null, minutes: null,
+      const t = { handler: fn, hours: null, minutes: null, days: null, hour: null,
                   getHandlerFunction: function () { return this.handler; } };
       triggerRec.list.push(t);
       return {
@@ -62,6 +69,22 @@ const ctx = {
           return {
             everyHours: function (h) { t.hours = h; return { create: function () {} }; },
             everyMinutes: function (m) { t.minutes = m; return { create: function () {} }; },
+            everyDays: function (d) {
+              t.days = d;
+              return { atHour: function (hh) { t.hour = hh; return { create: function () {} }; },
+                       create: function () {} };
+            },
+            everyWeeks: function (w) {
+              t.weeks = w;
+              return {
+                onWeekDay: function (d) {
+                  t.weekDay = d;
+                  return { atHour: function (hh) { t.hour = hh; return { create: function () {} }; },
+                           create: function () {} };
+                },
+                create: function () {},
+              };
+            },
           };
         },
       };
@@ -74,7 +97,7 @@ const ctx = {
       return labelStore[n];
     },
     search: function (q, offset, max) {
-      searchCalls.push({ offset: offset, max: max });
+      searchCalls.push({ q: q, offset: offset, max: max });
       return searchPages.shift() || [];
     },
   },
@@ -113,6 +136,18 @@ check('rules: shopping keyword from unknown store', R({ domain: 'unknown-store.c
 check('rules: shopping beats newsletters for marketplace domain', R({ domain: 'shein.com', name: 'SHEIN', subject: 'Promo com unsubscribe no rodapé', snippet: 'unsubscribe' }).category === 'shopping');
 check('rules: finance promoted domain (itau) + pix', R({ domain: 'itau.com.br', name: 'Itaú', subject: 'PIX recebido', snippet: '' }).category === 'finance');
 check('rules: work SaaS domain (github PR)', R({ domain: 'github.com', name: 'GitHub', subject: 'Pull request #12 ready', snippet: '' }).category === 'work');
+
+// — Rules: AI full-stack stack (work expansion: AI/LLM + infra domains) —
+check('rules: AI provider (anthropic/claude)', R({ domain: 'anthropic.com', name: 'Anthropic', subject: 'Notification', snippet: '' }).category === 'work');
+check('rules: AI provider subdomain (email.ollama.com)', R({ domain: 'email.ollama.com', name: 'Ollama', subject: 'Notification', snippet: '' }).category === 'work');
+check('rules: AI infra (huggingface)', R({ domain: 'huggingface.co', name: 'Hugging Face', subject: 'Notification', snippet: '' }).category === 'work');
+check('rules: data service (redis.com)', R({ domain: 'redis.com', name: 'Redis', subject: 'Notification', snippet: '' }).category === 'work');
+check('rules: secrets (doppler)', R({ domain: 'doppler.com', name: 'Doppler', subject: 'Notification', snippet: '' }).category === 'work');
+check('rules: BaaS (supabase)', R({ domain: 'supabase.com', name: 'Supabase', subject: 'Notification', snippet: '' }).category === 'work');
+check('rules: observability (sentry)', R({ domain: 'sentry.io', name: 'Sentry', subject: 'Notification', snippet: '' }).category === 'work');
+check('rules: work keyword merge request (unknown CI)', R({ domain: 'ci.corp.dev', name: 'CI Bot', subject: 'Merge request !42 approved', snippet: '' }).category === 'work');
+check('rules: work keyword deployment (unknown host)', R({ domain: 'buildsys.dev', name: 'Build System', subject: 'Deployment succeeded for api-gateway', snippet: '' }).category === 'work');
+check('rules: precedence — openai maintenance stays servicos (not work)', R({ domain: 'openai.com', name: 'OpenAI', subject: 'OpenAI: scheduled maintenance of the API', snippet: 'Expect brief interruptions.' }).category === 'servicos');
 check('rules: social promoted domain (tiktok)', R({ domain: 'tiktok.com', name: 'TikTok', subject: 'Novas curtidas', snippet: '' }).category === 'social');
 
 // — Rules: news + ads categories —
@@ -223,7 +258,7 @@ check('flag: cache hit replays the stored flag', (function () {
   const again = X.Categorizer.classify({ email: 'grass@gmail.com', name: 'Jornal da Vila', domain: 'gmail.com', subject: 'Edição 12', snippet: 'notícias da vila para você e mais 400 assinantes', bodyScan: 'x', attachmentCount: 0, toCount: 400 });
   return again.source === 'cache' && again.category === 'newsletters' && again.needsReview === true;
 })());
-check('flag: cache entry shape is {c, nr}', (function () {
+check('flag: cache entry shape is {c, nr, t}', (function () {
   const e = X.State.getSenderCache()['grass@gmail.com'];
   return e && e.c === 'newsletters' && e.nr === 1;
 })());
@@ -246,11 +281,49 @@ check('flag: cache entry shape is {c, nr}', (function () {
     const hit = X.Categorizer.classify(Object.assign({}, base, { email: 'weaksim@example.com' }));
     return hit.source === 'cache' && hit.needsReview === true;
   })());
-  check('flag: legacy string cache entry reads as unflagged', (function () {
+  // — Sender cache TTL (CONFIG.senderCacheTtlDays; 0 = keep forever) —
+  (function () {
+    const prevTtl = X.CONFIG.senderCacheTtlDays;
+    const DAY = 24 * 60 * 60 * 1000;
+
+    // fresh entry → cache hit
+    X.State.cacheSender('fresh@example.com', 'finance', false);
+    const fresh = X.Categorizer.classify({ email: 'fresh@example.com', name: 'F', domain: 'x.com', subject: 'q', snippet: '' });
+    check('ttl: fresh entry reads as cache hit', fresh.source === 'cache' && fresh.category === 'finance', fresh);
+
+    // entry older than the TTL + old category + fresh verdict is only a
+    // fallback (unknown sender, no rule/tree/embedding) → keeps serving the OLD
+    // category, FLAGGED (never degrades to uncategorized); the newest model
+    // re-tries it after the TTL
+    X.State.getSenderCache()['old@example.com'] = { c: 'finance', nr: 0, t: Date.now() - 31 * DAY };
+    const old = X.Categorizer.classify({ email: 'old@example.com', name: 'O', domain: 'unknown.tld', subject: 'oi', snippet: '' });
+    check('ttl: expired entry + fallback keeps the old category, flagged',
+          old.source === 'cache' && old.category === 'finance' && old.needsReview === true, old);
+
+    // legacy string entry (no timestamp) = age unknown → same protection
     X.State.getSenderCache()['legacy@example.com'] = 'finance';
-    const hit = X.Categorizer.classify({ email: 'legacy@example.com', name: 'L', domain: 'x.com', subject: 'q', snippet: '' });
-    return hit.source === 'cache' && hit.category === 'finance' && hit.needsReview === false;
-  })());
+    const legacy = X.Categorizer.classify({ email: 'legacy@example.com', name: 'L', domain: 'unknown.tld', subject: 'oi', snippet: '' });
+    check('ttl: legacy string entry + fallback keeps the old category, flagged',
+          legacy.source === 'cache' && legacy.category === 'finance' && legacy.needsReview === true, legacy);
+
+    // save drops entries that expired WITHOUT being re-classified; entries
+    // re-classified on expiry are re-stamped with a fresh timestamp
+    X.State.getSenderCache()['stale-only@example.com'] = { c: 'finance', nr: 0, t: Date.now() - 31 * DAY };
+    X.State.saveSenderCache();
+    const stored = JSON.parse(propsStore.SENDER_CACHE || '{}');
+    check('ttl: saveSenderCache drops expired (non-reclassified) entries',
+          !stored['stale-only@example.com'], stored);
+    check('ttl: expired-then-reclassified entry re-stamped with fresh timestamp',
+          stored['old@example.com'] && stored['old@example.com'].t > Date.now() - 60000, stored);
+
+    // TTL disabled (0) → nothing expires; legacy entries read as unflagged
+    X.CONFIG.senderCacheTtlDays = 0;
+    X.State.getSenderCache()['legacy@example.com'] = 'finance';
+    const kept = X.Categorizer.classify({ email: 'legacy@example.com', name: 'L', domain: 'x.com', subject: 'q', snippet: '' });
+    check('ttl: disabled (0) → legacy string entry reads as unflagged cache hit',
+          kept.source === 'cache' && kept.category === 'finance' && kept.needsReview === false, kept);
+    X.CONFIG.senderCacheTtlDays = prevTtl;
+  })();
 })();
 
 // — Labeler (GmailApp mocked above) —
@@ -329,7 +402,7 @@ check('labeler: full label tree created on demand',
   const resolvedThread = mkNrThread('nr1', 'uncertain@nubank.com.br',
     ['GMO/uncategorized', 'GMO/needs-review', 'GMO/Processed']);
   searchPages.push([resolvedThread]);
-  const rep = X.retriageNeedsReview(5);
+  const rep = X.reprocessNeedsReview(5);
   check('re-triage: confident re-verdict resolves the thread', rep.scanned === 1 && rep.resolved === 1, rep);
   check('re-triage: labels swapped, needs-review dropped, processed kept',
         names(resolvedThread).indexOf('GMO/finance') !== -1 &&
@@ -345,7 +418,7 @@ check('labeler: full label tree created on demand',
   const stillThread = mkNrThread('nr2', 'still@unknown.tld',
     ['GMO/uncategorized', 'GMO/needs-review', 'GMO/Processed'], 'oi');
   searchPages.push([stillThread]);
-  const rep2 = X.retriageNeedsReview(5);
+  const rep2 = X.reprocessNeedsReview(5);
   check('re-triage: still-uncertain keeps the tag (processed guaranteed)',
         rep2.resolved === 0 &&
         names(stillThread).indexOf('GMO/needs-review') !== -1 &&
@@ -418,10 +491,230 @@ check('labeler: full label tree created on demand',
         names(keepThread).indexOf('GMO/job-search') !== -1 &&
         names(keepThread).indexOf('GMO/uncategorized') === -1 &&
         names(keepThread).indexOf('GMO/Processed') !== -1, rp2);
+
+  // 3) FIM DA FILA: runFullFlow (o fluxo completo) auto-continua o backlog
+  //    reprocess quando o modelo mudou — só depois da fila de mail novo drenada
+  //    (inclui os fetches vazios da EXPANSÃO de backlog: 13 até o cap de 365d).
+  X.State.setReprocessFingerprint('stale-model-fp');
+  X.State.setReprocessOffset(0);
+  for (let i = 0; i < 14; i++) searchPages.push([]); // 1. fila primária + varredura completa + escada dos cards 1-2
+  searchPages.push([]);            // 2. card needs-review → vazio
+  searchPages.push([]);            // 3. card uncategorized → vazio
+  const autoThread = mkProcThread('rp3', 'lk-job@linkedin.com',
+    ['GMO/social', 'GMO/Processed'], 'InMail: Backend Engineer opportunity');
+  searchPages.push([autoThread]);  // 4. card processed: página 1
+  searchPages.push([]);            // 4. card processed: página 2 → fila completa
+  const autoSc0 = searchCalls.length;
+  const auto = X.runFullFlow();
+  check('queue: runFullFlow drains the reprocess backlog at the end of the queue',
+        !!auto.reprocess && auto.reprocess.done === true && auto.reprocess.scanned === 1,
+        auto.reprocess);
+  check('queue: auto-reprocess swapped the label (social → job-search)',
+        names(autoThread).indexOf('GMO/job-search') !== -1 &&
+        names(autoThread).indexOf('GMO/social') === -1, names(autoThread));
+  check('queue: fingerprint stored, cursor zeroed after auto-reprocess',
+        X.State.getReprocessFingerprint() === X.EmbeddingClassifier.refsFingerprint() &&
+        X.State.getReprocessOffset() === 0);
+  check('queue: card order needs-review → uncategorized → processed', (function () {
+    const qs = searchCalls.slice(autoSc0).map(function (c) { return String(c.q || ''); });
+    const iNr = qs.findIndex(function (q) { return q.indexOf('needs-review') !== -1; });
+    const iUnc = qs.findIndex(function (q) { return q.indexOf('uncategorized') !== -1; });
+    const iProc = qs.findIndex(function (q) {
+      return q.indexOf('label:GMO/Processed') !== -1 && q.indexOf('-label:') === -1;
+    });
+    return iNr !== -1 && iUnc !== -1 && iProc !== -1 && iNr < iUnc && iUnc < iProc;
+  })(), searchCalls.slice(autoSc0).map(function (c) { return c.q; }));
+
+  // 4) Fila NÃO drenada (budget exit): os cards ficam para a próxima execução —
+  //    nunca rodam à frente de mail novo.
+  X.State.setReprocessFingerprint('stale-model-fp');
+  const prevRuntime4 = X.CONFIG.maxRuntimeMs;
+  X.CONFIG.maxRuntimeMs = -1;
+  const budgetRun = X.runPipeline({});
+  X.CONFIG.maxRuntimeMs = prevRuntime4;
+  check('queue: budget exit → reprocess cards NOT run, backlog untouched',
+        !budgetRun.reprocess &&
+        X.State.getReprocessFingerprint() === 'stale-model-fp', budgetRun);
+
+  // 5) retriageUncategorized: bucket SEM needs-review ganha nova chance do modelo
+  //    (veredito confiante → troca a label; sem veredito confiante → fica onde
+  //    está, nunca é rebaixado nem marcado).
+  X.State.setReprocessOffset(0);
+  const u1 = mkProcThread('u1', 'alert@indeed.com',
+    ['GMO/uncategorized', 'GMO/Processed'], 'job alert matching your profile');
+  const u2 = mkProcThread('u2', 'friend@unknown.tld',
+    ['GMO/uncategorized', 'GMO/Processed'], 'oi tudo bem');
+  searchPages.push([u1, u2]);
+  const ru = X.retriageUncategorized(10);
+  check('uncategorized: confident verdict swaps the label (uncategorized → job-search)',
+        ru.resolved === 1 && ru.scanned === 2 &&
+        names(u1).indexOf('GMO/job-search') !== -1 &&
+        names(u1).indexOf('GMO/uncategorized') === -1 &&
+        names(u1).indexOf('GMO/Processed') !== -1, ru);
+  check('uncategorized: no confident verdict → thread stays (never flagged/downgraded)',
+        names(u2).indexOf('GMO/uncategorized') !== -1 &&
+        names(u2).indexOf('GMO/needs-review') === -1, ru);
+
+  // 6) OLDEST-FIRST: as re-triagens pegam o balde mais antigo primeiro
+  //    (older_than:2y → 1y → 6m → 3m → 1m → sem limite de data).
+  const oldNr = mkProcThread('nr1', 'alert@indeed.com',
+    ['GMO/needs-review', 'GMO/Processed'], 'job alert matching your profile');
+  searchPages.push([oldNr]);                       // balde older_than:2y
+  for (let i = 0; i < 5; i++) searchPages.push([]); // baldes 1y/6m/3m/1m/sem limite
+  const scNr = searchCalls.length;
+  const rnr = X.reprocessNeedsReview(20);
+  check('oldest-first: needs-review resolves the oldest bucket first',
+        rnr.resolved === 1 && rnr.scanned === 1, rnr);
+  check('oldest-first: ladder queries 2y → 1y → 6m → 3m → 1m → none', (function () {
+    const qs = searchCalls.slice(scNr).map(function (c) { return String(c.q || ''); });
+    const order = ['older_than:2y', 'older_than:1y', 'older_than:6m', 'older_than:3m', 'older_than:1m'];
+    let last = -1;
+    for (let k = 0; k < order.length; k++) {
+      const at = qs.findIndex(function (q) { return q.indexOf(order[k]) !== -1; });
+      if (at === -1 || at < last) return false;
+      last = at;
+    }
+    return true;
+  })(), searchCalls.slice(scNr).map(function (c) { return c.q; }));
+  check('oldest-first: resolved thread swapped labels, needs-review dropped',
+        names(oldNr).indexOf('GMO/job-search') !== -1 &&
+        names(oldNr).indexOf('GMO/needs-review') === -1 &&
+        names(oldNr).indexOf('GMO/Processed') !== -1, names(oldNr));
+
+  // 7) reprocessProcessed com cursor por BALDE (oldest-first): bucket 0 pega o
+  //    mais antigo, esgota os baldes até done, grava fingerprint e zera o cursor.
+  X.State.setReprocessFingerprint('stale-model-fp');
+  X.State.setReprocessOffset(0);
+  X.State.setReprocessBucket(0);
+  const rpOld = mkProcThread('rp5', 'old@nubank.com.br',
+    ['GMO/uncategorized', 'GMO/Processed'], 'Sua fatura venceu amanhã');
+  searchPages.push([rpOld]);                       // balde 2y: página 1
+  for (let i = 0; i < 6; i++) searchPages.push([]); // 2y página 2 + baldes 1y/6m/3m/1m/sem limite
+  const rpB = X.reprocessProcessed(100);
+  check('oldest-first: processed card sweeps the oldest bucket first',
+        rpB.changed === 1 && rpB.done === true, rpB);
+  check('oldest-first: completion resets (balde, offset) and stores fingerprint',
+        X.State.getReprocessBucket() === 0 && X.State.getReprocessOffset() === 0 &&
+        X.State.getReprocessFingerprint() === X.EmbeddingClassifier.refsFingerprint(), rpB);
+
+  // 8) retomada pelo BALDE: cursor em bucket 1 → a primeira busca usa older_than:1y.
+  X.State.setReprocessFingerprint('stale-model-fp');
+  X.State.setReprocessOffset(0);
+  X.State.setReprocessBucket(1);
+  const rpOld2 = mkProcThread('rp6', 'resume@itau.com.br',
+    ['GMO/uncategorized', 'GMO/Processed'], 'PIX recebido');
+  searchPages.push([rpOld2]);                      // balde 1y: página 1
+  for (let i = 0; i < 9; i++) searchPages.push([]); // 1y página 2 + 6m/3m/1m/sem limite... até done
+  const scRes = searchCalls.length;
+  const rpC = X.reprocessProcessed(100);
+  check('oldest-first: bucket cursor resumes at older_than:1y',
+        searchCalls[scRes].q.indexOf('older_than:1y') !== -1 &&
+        searchCalls[scRes].q.indexOf('older_than:2y') === -1, searchCalls[scRes].q);
+  check('oldest-first: resumed sweep completes and zeroes the cursor',
+        rpC.done === true && X.State.getReprocessBucket() === 0 &&
+        X.State.getReprocessOffset() === 0, rpC);
+
+  // 9) cards REPETEM em ciclos — nada de "20 e para": card 1 processa 20 por
+  //    ciclo e o ciclo repete até esgotar o balde / teto diário / 429 (os 5
+  //    restantes são pegos pelo card 2 no mesmo ciclo — seen é compartilhado).
+  X.State.setReprocessFingerprint('stale-model-fp');
+  X.State.setReprocessOffset(0);
+  X.State.setReprocessBucket(0);
+  X.State.addDailyUsage(-X.State.getDailyUsage());
+  searchPages.length = 0;
+  const nrBatch = [];
+  for (let i = 0; i < 25; i++) {
+    nrBatch.push(mkProcThread('n' + i, 'n' + i + '@nubank.com.br',
+      ['GMO/social', 'GMO/needs-review', 'GMO/Processed'], 'job alert matching your profile'));
+  }
+  searchPages.push(nrBatch);   // balde 2y: mesma página devolvida a cada busca
+  searchPages.push(nrBatch);   // ciclo 2: só os 5 não-varridos do ciclo 1 contam
+  const rcStats = {};
+  X.runReprocessCards(rcStats, Date.now());
+  check('cards: repeats in cycles past the 20 cap — all 25 re-scanned across cards',
+        rcStats.reScanned + rcStats.uncScanned === 25 &&
+        rcStats.reResolved + rcStats.uncResolved === 25, rcStats);
+  check('cards: daily usage counts every re-classified thread',
+        X.State.getDailyUsage() === 25, X.State.getDailyUsage());
+  check('cards: bucket sweep completed (fingerprint stored, cursor zeroed)',
+        X.State.getReprocessFingerprint() === X.EmbeddingClassifier.refsFingerprint() &&
+        X.State.getReprocessBucket() === 0 && X.State.getReprocessOffset() === 0);
+  X.State.addDailyUsage(-X.State.getDailyUsage());
+})();
+
+// — Expansão SEM limite de data: fila secou → varredura COMPLETA (sem after:),
+//   eventualmente TODO o histórico é avaliado; limite diário de 200 e-mails —
+(function () {
+  searchPages.length = 0;   // flush: descarta páginas vazadas de blocos anteriores
+  function mkT(id, email) {
+    const labels = [];
+    const msg = { getFrom: function () { return 'S <' + email + '>'; },
+                  getSubject: function () { return 'Sua fatura de janeiro'; },
+                  getPlainBody: function () { throw new Error('no body'); },
+                  getAttachments: function () { return []; },
+                  getDate: function () { return new Date('2026-01-05T10:00:00Z'); },
+                  getTo: function () { return 'me@gmail.com'; },
+                  getCc: function () { return ''; } };
+    return { getId: function () { return id; },
+             getLabels: function () { return labels.map(function (n) {
+               return { name: n, getName: function () { return n; } }; }); },
+             addLabel: function (l) { if (labels.indexOf(l.name) === -1) labels.push(l.name); },
+             removeLabel: function () {},
+             getPermalink: function () { return 'p-' + id; },
+             getMessages: function () { return [msg]; } };
+  }
+
+  // A) janela primária vazia → varredura COMPLETA (sem after:) acha o histórico
+  //    antigo e o processa; varredura vazia de novo → fim limpo.
+  searchPages.push([]);
+  searchPages.push([mkT('x1', 'a@nubank.com.br'), mkT('x2', 'b@stripe.com')]);
+  const sc0 = searchCalls.length;
+  const stA = X.runPipeline({ expandBacklog: true, reprocess: false });
+  check('backlog: no date limit — full-history scan evaluates old mail',
+        stA.labeled === 2 && stA.expanded === 1, stA);
+  check('backlog: full-scan query drops the after: clause',
+        searchCalls[sc0 + 1].q.indexOf('after:') === -1 &&
+        searchCalls[sc0 + 1].q.indexOf('label:GMO/Processed') !== -1, searchCalls[sc0 + 1].q);
+  check('backlog: exhausted full scan ends the run cleanly',
+        searchCalls.length - sc0 === 3, searchCalls.length - sc0);
+
+  // B) mailbox inteiro já processado → varredura vazia, fim limpo.
+  searchPages.length = 0;
+  searchPages.push([]);
+  const scB = searchCalls.length;
+  const stB = X.runPipeline({ expandBacklog: true, reprocess: false });
+  check('backlog: fully processed mailbox → clean end (1 search + full scan)',
+        stB.labeled === 0 && stB.expanded === 1 && searchCalls.length - scB === 2, stB);
+
+  // C) limite diário (200): usage ≥ 200 → para ANTES de buscar qualquer coisa
+  //    (nenhuma busca; os cards também ficam para amanhã).
+  X.State.addDailyUsage(200);
+  const sc2 = searchCalls.length;
+  const stC = X.processNewEmails();
+  check('daily: 200/day cap stops the run before any fetch',
+        stC.dailyCapped === true && searchCalls.length - sc2 === 0, stC);
+
+  // D) teto diário macio: o lote pode ultrapassar o limite, mas a execução para
+  //    antes do próximo fetch e o cursor não avança (fila persistente).
+  X.State.addDailyUsage(195 - X.State.getDailyUsage());
+  const lastRunD = propsStore.LAST_RUN;
+  searchPages.length = 0;
+  const pageD = [];
+  for (let i = 0; i < 25; i++) pageD.push(mkT('d' + i, 'z' + i + '@stripe.com'));
+  searchPages.push(pageD);
+  const sc3 = searchCalls.length;
+  const stD = X.runPipeline({ expandBacklog: true, reprocess: false });
+  check('daily: soft cap per batch — run stops before the next fetch (25 labeled)',
+        stD.labeled === 25 && stD.dailyCapped === true &&
+        searchCalls.length - sc3 === 1 && propsStore.LAST_RUN === lastRunD, stD);
+
+  // usage zerado para os testes seguintes
+  X.State.addDailyUsage(-X.State.getDailyUsage());
 })();
 
 // — analyzeUncategorized: agrupa por domínio e ordena por frequência —
 (function () {
+  searchPages.length = 0;   // flush: descarta páginas vazadas de blocos anteriores
   function mkUnc(id, email, domain, subject) {
     const labels = [{ name: 'GMO/uncategorized', getName: function () { return 'GMO/uncategorized'; } }];
     const msg = {
@@ -878,6 +1171,7 @@ check('cross: linkedin pessoal SEM vaga → social pelo domínio (proxy genéric
     };
     return th;
   }
+  searchPages.length = 0;   // flush: descarta páginas vazadas de blocos anteriores
   const q1 = mkQueueThread('q1', 'x1@unknown.tld');
   const q2 = mkQueueThread('q2', 'x2@unknown.tld');
   const q3 = mkQueueThread('q3', 'x3@unknown.tld');
@@ -903,6 +1197,7 @@ check('query: cursor overlap window, read status irrelevant',
 
 // — Scale: chunked labeling with debounce —
 (function () {
+  searchPages.length = 0;   // flush: descarta páginas vazadas de blocos anteriores
   function mkThread(id, email) {
     const msg = {
       getFrom: function () { return 'Sender <' + email + '>'; },
@@ -991,16 +1286,237 @@ check('query: cursor overlap window, read status irrelevant',
   X.CONFIG.batchSize = 25;
   X.CONFIG.maxBatchesPerRun = prevCap;
 
-  // — Scale: setupTrigger snaps CONFIG.triggerMinutes (60→hourly, 17→every 15min) —
+  // — Scale: setupTrigger snaps CONFIG.triggerMinutes to VALID Apps Script values —
+  // (everyMinutes only accepts 1,5,10,15,30; the old round(x/5)*5 snap produced
+  //  20/25 for e.g. triggerMinutes=20 and create() THREW — scheduling silently
+  //  broken, no trigger installed)
+  function lastTrigger() { return triggerRec.list[triggerRec.list.length - 1]; }
   X.CONFIG.triggerMinutes = 60;
   X.setupTrigger();
-  const hourly = triggerRec.list[triggerRec.list.length - 1];
+  check('scale: trigger 60min → everyHours(1)', (function () {
+    const t = lastTrigger(); return t.hours === 1 && t.minutes === null; })(), lastTrigger());
   X.CONFIG.triggerMinutes = 17;
   X.setupTrigger();
-  const every15 = triggerRec.list[triggerRec.list.length - 1];
-  check('scale: trigger 60min → everyHours(1)', hourly.hours === 1 && hourly.minutes === null, hourly);
-  check('scale: trigger 17min → snapped to everyMinutes(15)', every15.minutes === 15, every15);
+  check('scale: trigger 17min → everyMinutes(15)', lastTrigger().minutes === 15, lastTrigger());
+  X.CONFIG.triggerMinutes = 20;
+  X.setupTrigger();
+  check('scale: trigger 20min → everyMinutes(15) (old snap threw — no trigger installed)',
+        lastTrigger().minutes === 15 && lastTrigger().hours === null, lastTrigger());
+  X.CONFIG.triggerMinutes = 25;
+  X.setupTrigger();
+  check('scale: trigger 25min → everyMinutes(30)', lastTrigger().minutes === 30, lastTrigger());
+  X.CONFIG.triggerMinutes = 90;
+  X.setupTrigger();
+  check('scale: trigger 90min → everyHours(2)', lastTrigger().hours === 2, lastTrigger());
+  X.CONFIG.triggerMinutes = 1440;
+  X.setupTrigger();
+  check('scale: trigger 1440min → everyDays(1) @ 6h (every 24 h)', (function () {
+    const t = lastTrigger();
+    return t.days === 1 && t.hour === 6 && t.hours === null && t.minutes === null;
+  })(), lastTrigger());
+  X.CONFIG.triggerMinutes = 2880;
+  X.setupTrigger();
+  check('scale: trigger 2880min → everyDays(2)', lastTrigger().days === 2, lastTrigger());
+  X.CONFIG.triggerMinutes = 2000;
+  X.setupTrigger();
+  check('scale: trigger 2000min → everyDays(1) (rounds down, no 23h drift)', lastTrigger().days === 1, lastTrigger());
   X.CONFIG.triggerMinutes = 60;
+})();
+
+// ─── Tuner.gs — weekly in-script decision-tree tuner ─────────────────────
+(function () {
+  // Drive + OAuth mocks — later suites DELETE ctx.UrlFetchApp/getOAuthToken,
+  // so the tuner block re-installs its own (same contract as the drive tests).
+  const store = {};
+  let seq = 0;
+  ctx.ScriptApp.getOAuthToken = function () { return 'tuner-token'; };
+  ctx.UrlFetchApp = {
+    fetch: function (url, req) {
+      const ok = { getResponseCode: function () { return 200; },
+                   getContentText: function () { return '{}'; },
+                   getHeaders: function () { return {}; } };
+      if (url.indexOf('uploadType=multipart') !== -1 && req.method === 'post') {
+        const id = 'tune-' + (++seq);
+        const parts = req.payload.split('\r\n\r\n');
+        store[id] = parts[2] ? parts[2].split('\r\n--')[0] : '';
+        return { getResponseCode: function () { return 200; },
+                 getContentText: function () { return JSON.stringify({ id: id }); },
+                 getHeaders: function () { return {}; } };
+      }
+      if (url.indexOf('uploadType=media') !== -1 && req.method === 'patch') {
+        const id = url.split('/files/')[1].split('?')[0];
+        store[id] = String(req.payload);
+        return ok;
+      }
+      if (url.indexOf('alt=media') !== -1) {
+        const id = url.split('/files/')[1].split('?')[0];
+        if (store[id] === undefined) {
+          return { getResponseCode: function () { return 404; },
+                   getContentText: function () { return '{}'; },
+                   getHeaders: function () { return {}; } };
+        }
+        return { getResponseCode: function () { return 200; },
+                 getContentText: function () { return store[id]; },
+                 getHeaders: function () { return {}; } };
+      }
+      return { getResponseCode: function () { return 400; },
+               getContentText: function () { return '{}'; },
+               getHeaders: function () { return {}; } };
+    },
+  };
+
+  // Ladder = depths × minNodes
+  check('tuner: ladder = depths × minNodes (25 shapes)',
+        X.Tuner.buildLadder().length === 25);
+
+  // stratifiedFolds: partition once, every class in every fold
+  const samples = [];
+  for (let i = 0; i < 40; i++) {
+    samples.push({ features: { lang_en: 1, sig_work: 1 }, class: 'work' });
+  }
+  for (let i = 0; i < 40; i++) {
+    samples.push({ features: { lang_pt: 1, sig_news: 1 }, class: 'news' });
+  }
+  const folds = X.Tuner.stratifiedFolds(samples, 4);
+  const seen = {};
+  let okFolds = folds.length === 4 && folds.every(function (f) {
+    return f.length === 20;
+  });
+  folds.forEach(function (f) {
+    f.forEach(function (i) { seen[i] = 1; });
+  });
+  let covered = 0;
+  Object.keys(seen).forEach(function () { covered++; });
+  check('tuner: stratifiedFolds partitions every sample exactly once',
+        okFolds && covered === 80);
+  const stratified = folds.every(function (f) {
+    const cls = {};
+    f.forEach(function (i) { cls[samples[i].class] = 1; });
+    return Object.keys(cls).length === 2;
+  });
+  check('tuner: stratifiedFolds keeps both classes in every fold', stratified);
+
+  // leafVerdict: pure walk (gate applied by the caller)
+  const tiny = { nodes: [{ leaf: true, class: 'work', confidence: 0.8 }] };
+  const v = X.Tuner.leafVerdict({ lang_en: 1 }, tiny);
+  check('tuner: leafVerdict returns {cls, conf} ungated',
+        !!v && v.cls === 'work' && v.conf === 0.8);
+  check('tuner: leafVerdict null-class leaf → null (defer)',
+        X.Tuner.leafVerdict({ lang_en: 1 },
+          { nodes: [{ leaf: true, class: null, confidence: 0.9 }] }) === null);
+
+  // cvShape: separable corpus → perfect CV at both gates (sweep is free)
+  const res = X.Tuner.cvShape({ d: 4, n: 3 }, samples, folds, [0.85, 0.75]);
+  const rHi = res.filter(function (r) { return r.conf === 0.85; })[0];
+  const rLo = res.filter(function (r) { return r.conf === 0.75; })[0];
+  check('tuner: cvShape perfect on separable corpus (strict gate)',
+        !!rHi && rHi.acc === 1 && rHi.resolved === 80);
+  check('tuner: cvShape gate sweep needs no retrain (same accuracy)',
+        !!rLo && rLo.acc === 1 && rLo.resolved === 80);
+
+  // Champion baseline reads the production model
+  const champ = X.Tuner.currentChampion(samples);
+  check('tuner: currentChampion reports gate + accuracy',
+        champ.gate === 0.85 && champ.acc >= 0);
+
+  // collectSamples: cache-hit path (no Gmail at all)
+  const seeded = X.Utils.driveJsonPut('TUNER_CORPUS_FILE_ID', 'tuner-corpus.json', {
+    ts: new Date().toISOString(), perClass: { work: 1 },
+    samples: [{ f: { lang_en: 1, sig_work: 1 }, y: 'work' }],
+  });
+  check('tuner: corpus cache seeded to Drive', !!seeded);
+  const got = X.Tuner.collectSamples(Date.now());
+  check('tuner: collectSamples serves the fresh cache (fromCache, no labels)',
+        got.fromCache === true && got.samples.length === 1 &&
+        got.samples[0].class === 'work');
+
+  // e2e runWeeklyTuner on the cached corpus (tiny search space, fast)
+  const origTune = JSON.parse(JSON.stringify(X.CONFIG.trainer.tune));
+  X.CONFIG.trainer.tune.depthCandidates = [3, 4];
+  X.CONFIG.trainer.tune.minNodeCandidates = [3];
+  X.CONFIG.trainer.tune.confCandidates = [0.8];
+  const many = [];
+  for (let i = 0; i < 600; i++) {
+    many.push({ f: { lang_en: 1, sig_work: 1 }, y: 'work' });
+  }
+  for (let i = 0; i < 600; i++) {
+    many.push({ f: { lang_pt: 1, sig_news: 1 }, y: 'news' });
+  }
+  X.Utils.driveJsonPut('TUNER_CORPUS_FILE_ID', 'tuner-corpus.json', {
+    ts: new Date().toISOString(), perClass: { work: 30, news: 30 }, samples: many,
+  });
+  const run1 = X.runWeeklyTuner();
+  check('tuner: e2e run finds a perfect combo on the separable corpus',
+        run1.ok === true && run1.best.acc === 1 && run1.combos === 2);
+  check('tuner: candidate model saved to Drive (TUNED_MODEL_FILE_ID)',
+        run1.saved === true && !!propsStore['TUNED_MODEL_FILE_ID']);
+  check('tuner: ladder cursor advanced (rotation state persisted)',
+        propsStore['TUNER_CURSOR'] === '1');
+  check('tuner: no auto-apply by default (no TREE_MODEL_SOURCE override)',
+        !propsStore['TREE_MODEL_SOURCE']);
+
+  // rotation wraps the ladder: cursor at the LAST shape + a deadline that
+  // cuts between shape 0 and shape 1 → only the WRAPPED first shape runs,
+  // then the sweep pauses mid-ladder (resume point persisted). Trainer.train
+  // is patched in-vm with a busy-wait so shape 0 deterministically overruns
+  // the 12 ms sweep deadline regardless of machine speed.
+  const savedMaxRuntime = X.CONFIG.maxRuntimeMs;
+  const savedTrain = X.Trainer.train;
+  X.Trainer.train = function (samples, opts) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15) { /* busy-wait 15 ms per training */ }
+    return savedTrain(samples, opts);
+  };
+  X.CONFIG.maxRuntimeMs = 20012; // sweep deadline = start + 12 ms
+  const t0run = Date.now();
+  const run2 = X.runWeeklyTuner();
+  const elapsedRun2 = Date.now() - t0run;
+  X.Trainer.train = savedTrain;
+  X.CONFIG.maxRuntimeMs = savedMaxRuntime;
+  check('tuner: rotation wraps to index 0 and pauses mid-ladder',
+        run2.ok === true && run2.paused === true &&
+        propsStore['TUNER_CURSOR'] === '0',
+        JSON.stringify({ ok: run2.ok, paused: run2.paused,
+                         cursor: propsStore['TUNER_CURSOR'],
+                         combos: run2.combos, elapsedMs: elapsedRun2 }));
+
+  // autoApply ON + gain requirement met → property override (no code edits)
+  X.CONFIG.trainer.tune.autoApply = true;
+  X.CONFIG.trainer.tune.autoApplyMinGainPp = -1;
+  const run3 = X.runWeeklyTuner();
+  check('tuner: autoApply sets the TREE_MODEL_SOURCE override',
+        run3.ok === true &&
+        propsStore['TREE_MODEL_SOURCE'] === 'drive:tree-model-tuned.json');
+  X.CONFIG.trainer.tune.autoApply = false;
+  X.CONFIG.trainer.tune.autoApplyMinGainPp = origTune.autoApplyMinGainPp;
+  X.State.set('TREE_MODEL_SOURCE', ''); // clean the override
+
+  // status reflects the state without throwing
+  const st = X.tunerStatus();
+  check('tuner: status reports cursor + cleared override',
+        !!st && st.cursor === '0' && st.modelOverride === '' &&
+        st.autoApply === false);
+
+  // weekly trigger lifecycle (everyWeeks(1) + onWeekDay mock)
+  X.setupWeeklyTuner();
+  const wt = triggerRec.list[triggerRec.list.length - 1];
+  check('tuner: setupWeeklyTuner installs a weekly trigger',
+        wt.handler === 'runWeeklyTuner' && wt.weeks === 1);
+  const removed = X.removeWeeklyTuner();
+  check('tuner: removeWeeklyTuner clears its triggers',
+        removed >= 1 && triggerRec.list.every(function (t) {
+          return t.handler !== 'runWeeklyTuner';
+        }));
+
+  // expired cache + no tagged labels → graceful not-enough-samples
+  X.Utils.driveJsonPut('TUNER_CORPUS_FILE_ID', 'tuner-corpus.json', {
+    ts: new Date(Date.now() - 8 * 86400000).toISOString(),
+    perClass: {}, samples: many,
+  });
+  const run4 = X.runWeeklyTuner();
+  check('tuner: expired cache + empty mailbox → graceful refusal',
+        run4.ok === false && run4.reason === 'not-enough-samples');
+  X.CONFIG.trainer.tune = origTune;
 })();
 
 console.log(failures === 0 ? '\nAll sandbox tests passed ✔' : '\n' + failures + ' test(s) FAILED ✘');
