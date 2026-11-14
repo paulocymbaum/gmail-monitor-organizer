@@ -1,0 +1,20 @@
+{
+  "name": "gmail-monitor-organizer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gmail Monitor & Organizer — Apps Script project (local test harness)",
+  "scripts": {
+    "test": "node tests/sandbox.test.js && node tests/integration.test.js",
+    "test:unit": "node tests/sandbox.test.js",
+    "test:integration": "node tests/integration.test.js",
+    "test:local-model": "USE_LOCAL_MODEL=1 node tests/integration.test.js",
+    "push": "cp appsscript.json src/appsscript.json && node -e \"const m=require('./appsscript.json'); if(!m.oauthScopes||!m.oauthScopes.length) { console.error('ABORT: manifest sem oauthScopes (clasp create sobrescreve?)'); process.exit(1); }\" && clasp push -f",
+    "status": "clasp show-file-status",
+    "open": "clasp open-script 2>/dev/null || node -e \"const c=require('./.clasp.json'); console.log('https://script.google.com/u/0/home/projects/'+c.scriptId+'/edit')\"",
+    "logs": "clasp tail-logs",
+    "watch": "npm run push && clasp push -w"
+  },
+  "devDependencies": {
+    "@xenova/transformers": "^2.17.2"
+  }
+}

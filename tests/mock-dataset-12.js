@@ -1,0 +1,81 @@
+/**
+ * tests/mock-dataset-12.js — tenth mock wave (+42 samples, EN/PT/ES). Widens
+ * coverage where it was thinnest: `work` (rule + PT/ES embedding), `social`
+ * (Pinterest/Reddit/Discord domains + PT/ES embedding), plus more `news`,
+ * `ads`, `shopping` (tree-tier + embedding-tier), `finance` (PT/ES embedding),
+ * `job-search`, `newsletters` (sponsor-digest guard) and `spam-trash`
+ * (brand-lookalike phishing). Rich fields, mock-dataset-11 style.
+ */
+const MOCK_EMAILS_12 = [
+  // ─── NEWS — rule tier: more outlets + headline keywords ──────
+  { email: 'redacao@jornalmanchete.com.br', name: 'Jornal Manchete', domain: 'jornalmanchete.com.br', subject: 'Manchetes de hoje: confira as principais', snippet: 'Resumo da noite.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 4, bodyLength: 620, attachmentNames: [], userLabels: [], expected: 'news', lang: 'pt', tier: 'rule' },
+  { email: 'alertas@newsroom9.tv', name: 'NewsRoom9', domain: 'newsroom9.tv', subject: 'Breaking news: bridge reopens ahead of schedule', snippet: 'Full story on site.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 3, bodyLength: 640, attachmentNames: [], userLabels: [], expected: 'news', lang: 'en', tier: 'rule' },
+  { email: 'noite@diariodanoite.com.br', name: 'Diário da Noite', domain: 'diariodanoite.com.br', subject: 'Últimas notícias: tudo sobre o novo plano', snippet: 'Cobertura especial.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 4, bodyLength: 600, attachmentNames: [], userLabels: [], expected: 'news', lang: 'pt', tier: 'rule' },
+  // ─── NEWS — tree tier: PT headline markers in the body scan ──
+  { email: 'redacao@jornalnoite.com.br', name: 'Jornal da Noite', domain: 'jornalnoite.com.br', subject: 'Jornal da noite: seu resumo do dia', snippet: 'Edição completa.', bodyScan: 'veja as ultimas noticias de hoje para voce e mais manchetes', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 4, bodyLength: 850, attachmentNames: [], userLabels: [], expected: 'news', lang: 'pt', tier: 'tree' },
+  // ─── NEWS — embedding tier ────────────────────────────────────
+  { email: 'tips@capitolwire.news', name: 'The Capitol Wire', domain: 'capitolwire.news', subject: 'Your headlines: five developments from the newsroom', snippet: 'Top stories and live coverage.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 5, bodyLength: 760, attachmentNames: [], userLabels: [], expected: 'news', lang: 'en', tier: 'embedding' },
+  { email: 'giro@girodiario.com.br', name: 'Giro Diário', domain: 'girodiario.com.br', subject: 'Reportagem especial: a vida na floresta', snippet: 'Reportagem especial com cobertura jornalística ao vivo.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 6, bodyLength: 820, attachmentNames: [], userLabels: [], expected: 'news', lang: 'pt', tier: 'embedding' },
+
+  // ─── ADS — rule tier: more promo keywords ─────────────────────
+  { email: 'rebajas@modacenter.es', name: 'Moda Center', domain: 'modacenter.es', subject: 'Gran promoción de invierno', snippet: 'Cupón EXTRA15.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 11, bodyLength: 1300, attachmentNames: [], userLabels: [], expected: 'ads', lang: 'es', tier: 'rule' },
+  { email: 'vendas@techbem.com.br', name: 'TechBem', domain: 'techbem.com.br', subject: 'Semana do consumidor: até 40% OFF em notebooks', snippet: 'Cupom no site.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 12, bodyLength: 1450, attachmentNames: [], userLabels: [], expected: 'ads', lang: 'pt', tier: 'rule' },
+  { email: 'cliente@sabia.com.br', name: 'Banco Sabiá', domain: 'sabia.com.br', subject: 'Desconto exclusivo para clientes do banco', snippet: 'Válido este mês.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 4, bodyLength: 780, attachmentNames: [], userLabels: [], expected: 'ads', lang: 'pt', tier: 'rule' },
+  // ─── ADS — tree tier: promo markers in the body scan ──────────
+  { email: 'early@pinecone-labs.com', name: 'Pinecone Labs', domain: 'pinecone-labs.com', subject: 'Early access opens soon', snippet: 'Preview the collection.', bodyScan: 'exclusive discount for early members — coupon inside, sale ends tonight', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 8, bodyLength: 1350, attachmentNames: [], userLabels: [], expected: 'ads', lang: 'en', tier: 'tree' },
+  // ─── ADS — embedding tier ─────────────────────────────────────
+  { email: 'deals@cratejoydeals.com', name: 'CrateJoy Deals', domain: 'cratejoydeals.com', subject: 'Member-only savings weekend', snippet: 'Deals for the season.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 10, bodyLength: 1280, attachmentNames: [], userLabels: [], expected: 'ads', lang: 'en', tier: 'embedding' },
+  { email: 'hola@rebajasstore.es', name: 'Rebajas Store', domain: 'rebajasstore.es', subject: 'Gran venta de temporada: precios rebajados', snippet: 'Ahorra en cada compra esta semana.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 9, bodyLength: 1330, attachmentNames: [], userLabels: [], expected: 'ads', lang: 'es', tier: 'embedding' },
+
+  // ─── SHOPPING — rule tier: more marketplaces + order keywords ──
+  { email: 'aviso@magazineluiza.com.br', name: 'Magalu', domain: 'magazineluiza.com.br', subject: 'Seu pedido está a caminho', snippet: 'Acompanhe a entrega.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 3, bodyLength: 540, attachmentNames: [], userLabels: [], expected: 'shopping', lang: 'pt', tier: 'rule' },
+  { email: 'orders@temu.com', name: 'Temu', domain: 'temu.com', subject: 'Order confirmed: puzzle set on its way', snippet: 'Track your parcel.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 3, bodyLength: 510, attachmentNames: [], userLabels: [], expected: 'shopping', lang: 'en', tier: 'rule' },
+  { email: 'entrega@kabum.com.br', name: 'KaBuM!', domain: 'kabum.com.br', subject: 'Rastreio disponível: pedido #8812', snippet: 'Nota fiscal emitida.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 2, bodyLength: 490, attachmentNames: [], userLabels: [], expected: 'shopping', lang: 'pt', tier: 'rule' },
+  { email: 'pedidos@cornermart.shop', name: 'CornerMart', domain: 'cornermart.shop', subject: 'Order shipped and on its way', snippet: 'Arriving this week.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 3, bodyLength: 500, attachmentNames: [], userLabels: [], expected: 'shopping', lang: 'en', tier: 'rule' },
+  // ─── SHOPPING — embedding tier (unknown stores) ────────────────
+  { email: 'loja@lojabela.com.br', name: 'Loja Bela', domain: 'lojabela.com.br', subject: 'A compra saiu para entrega', snippet: 'Acompanhe a entrega da sua compra.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 2, bodyLength: 520, attachmentNames: [], userLabels: [], expected: 'shopping', lang: 'pt', tier: 'embedding' },
+  { email: 'envios@mercadocentral.mx', name: 'Mercado Central', domain: 'mercadocentral.mx', subject: 'Tu paquete fue enviado', snippet: 'Consulta el estado del envio.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 3, bodyLength: 530, attachmentNames: [], userLabels: [], expected: 'shopping', lang: 'es', tier: 'embedding' },
+
+  // ─── WORK — rule tier: SaaS domains + meeting keywords ────────
+  { email: 'notifications@slack.com', name: 'Slack', domain: 'slack.com', subject: 'New message in #design-crit', snippet: 'Open in Slack.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 2, bodyLength: 380, attachmentNames: [], userLabels: [], expected: 'work', lang: 'en', tier: 'rule' },
+  { email: 'updates@miro.com', name: 'Miro', domain: 'miro.com', subject: 'New sticky notes on the sprint board', snippet: 'Open the board.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 2, bodyLength: 360, attachmentNames: [], userLabels: [], expected: 'work', lang: 'en', tier: 'rule' },
+  { email: 'jane@acmecorp.example', name: 'Acme Corp', domain: 'acmecorp.example', subject: 'Q4 planning meeting moved to Friday', snippet: 'Agenda attached.', bodyScan: '', toCount: 2, ccCount: 1, threadMsgCount: 2, linkCount: 1, bodyLength: 450, attachmentNames: ['q4-agenda.pdf'], userLabels: [], expected: 'work', lang: 'en', tier: 'rule' },
+  { email: 'dev@gitlab.example', name: 'GitLab', domain: 'gitlab.com', subject: 'Merge request !42 approved', snippet: 'Merged into main.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 2, bodyLength: 340, attachmentNames: [], userLabels: [], expected: 'work', lang: 'en', tier: 'rule' },
+  // ─── WORK — embedding tier: client mail in PT/ES ──────────────
+  { email: 'joao@andradeconsultoria.com.br', name: 'Cliente Andrade', domain: 'andradeconsultoria.com.br', subject: 'Reunião do projeto amanhã às 10h', snippet: 'Pauta e agenda em anexo.', bodyScan: '', toCount: 1, ccCount: 0, threadMsgCount: 1, linkCount: 1, bodyLength: 400, attachmentNames: [], userLabels: [], expected: 'work', lang: 'pt', tier: 'embedding' },
+  { email: 'pm@ruizcorp.cl', name: 'Cliente Ruiz Ltda', domain: 'ruizcorp.cl', subject: 'Reunión de proyecto el jueves', snippet: 'Orden del día y pauta.', bodyScan: '', toCount: 1, ccCount: 0, threadMsgCount: 1, linkCount: 1, bodyLength: 410, attachmentNames: [], userLabels: [], expected: 'work', lang: 'es', tier: 'embedding' },
+
+  // ─── SOCIAL — rule tier: more platform domains ────────────────
+  { email: 'updates@pinterest.com', name: 'Pinterest', domain: 'pinterest.com', subject: 'Boards you might like this week', snippet: 'See the picks.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 6, bodyLength: 640, attachmentNames: [], userLabels: [], expected: 'social', lang: 'en', tier: 'rule' },
+  { email: 'digest@reddit.com', name: 'Reddit', domain: 'reddit.com', subject: 'Top post in r/brasil', snippet: 'Join the thread.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 4, bodyLength: 620, attachmentNames: [], userLabels: [], expected: 'social', lang: 'en', tier: 'rule' },
+  { email: 'noreply@discord.com', name: 'Discord', domain: 'discord.com', subject: 'New messages in #geral', snippet: 'Open the channel.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 3, bodyLength: 380, attachmentNames: [], userLabels: [], expected: 'social', lang: 'en', tier: 'rule' },
+  // ─── SOCIAL — embedding tier (small platforms) ────────────────
+  { email: 'aviso@redeconnect.com.br', name: 'RedeConnect', domain: 'redeconnect.com.br', subject: 'Alguem seguiu voce hoje', snippet: 'Veja quem é.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 3, bodyLength: 300, attachmentNames: [], userLabels: [], expected: 'social', lang: 'pt', tier: 'embedding' },
+  { email: 'notificaciones@conecta.app', name: 'Conecta', domain: 'conecta.app', subject: 'Nuevos seguidores y reacciones a tu foto', snippet: 'Mira tu perfil.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 4, bodyLength: 320, attachmentNames: [], userLabels: [], expected: 'social', lang: 'es', tier: 'embedding' },
+
+  // ─── FINANCE — rule tier: more banks ──────────────────────────
+  { email: 'cobranca@bradesco.com.br', name: 'Bradesco', domain: 'bradesco.com.br', subject: 'Fatura fechada: pague até o vencimento', snippet: 'PIX também disponível.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 2, bodyLength: 520, attachmentNames: [], userLabels: [], expected: 'finance', lang: 'pt', tier: 'rule' },
+  { email: 'service@paypal.com', name: 'PayPal', domain: 'paypal.com', subject: 'Receipt of your payment', snippet: 'Thanks for your purchase.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 2, bodyLength: 480, attachmentNames: [], userLabels: [], expected: 'finance', lang: 'en', tier: 'rule' },
+  // ─── FINANCE — embedding tier (unknown fintechs) ──────────────
+  { email: 'avisos@bancosur.es', name: 'Banco Sur', domain: 'bancosur.es', subject: 'Su factura del mes esta lista', snippet: 'Pague antes del vencimiento.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 2, bodyLength: 460, attachmentNames: [], userLabels: [], expected: 'finance', lang: 'es', tier: 'embedding' },
+  { email: 'cobranca@fintechminha.com.br', name: 'Fintech Minha', domain: 'fintechminha.com.br', subject: 'Cobranca programada: pagamento por debito automatico amanha', snippet: 'Confira o valor.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 2, bodyLength: 470, attachmentNames: [], userLabels: [], expected: 'finance', lang: 'pt', tier: 'embedding' },
+
+  // ─── JOB-SEARCH — rule + embedding tiers ──────────────────────
+  { email: 'ats@peopletech-ats.com', name: 'PeopleTech ATS', domain: 'peopletech-ats.com', subject: 'Interview invitation: Data Engineer stage', snippet: 'Confirm your slot.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 3, bodyLength: 620, attachmentNames: [], userLabels: [], expected: 'job-search', lang: 'en', tier: 'rule' },
+  { email: 'talento@recruitbr.com', name: 'Recruit BR', domain: 'recruitbr.com', subject: 'Oportunidade: desenvolvedor backend', snippet: 'Confira os detalhes da vaga.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 4, bodyLength: 640, attachmentNames: [], userLabels: [], expected: 'job-search', lang: 'pt', tier: 'rule' },
+  { email: 'status@hireloop.io', name: 'HireLoop', domain: 'hireloop.io', subject: 'Your application moved forward', snippet: 'The hiring team wants to schedule a call.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 2, bodyLength: 580, attachmentNames: [], userLabels: [], expected: 'job-search', lang: 'en', tier: 'embedding' },
+
+  // ─── NEWSLETTERS — rule guard + embedding ─────────────────────
+  { email: 'issue@substack.com', name: 'The Weekly Digest', domain: 'substack.com', subject: 'Issue 9: our sponsor deals inside', snippet: 'This week in review.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 9, bodyLength: 1300, attachmentNames: [], userLabels: [], expected: 'newsletters', lang: 'en', tier: 'rule' },
+  { email: 'club@clubmensual.es', name: 'Club Mensual', domain: 'clubmensual.es', subject: 'Boletin mensual — novedades y eventos', snippet: 'Darse de baja aqui.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 7, bodyLength: 1100, attachmentNames: [], userLabels: [], expected: 'newsletters', lang: 'es', tier: 'embedding' },
+
+  // ─── SPAM-TRASH — embedding tier: phishing + golpe ────────────
+  { email: 'support@paypa1-support.click', name: 'Paypa1 Support', domain: 'paypa1-support.click', subject: 'Verify your identity to restore access', snippet: 'Act within 24 hours.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 2, bodyLength: 610, attachmentNames: [], userLabels: [], expected: 'spam-trash', lang: 'en', tier: 'embedding' },
+  { email: 'saque@premio-master.click', name: 'Prêmio Master', domain: 'premio-master.click', subject: 'Voce ganhou: resgate seu premio imediatamente', snippet: 'Clique para sacar.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 2, bodyLength: 600, attachmentNames: [], userLabels: [], expected: 'spam-trash', lang: 'pt', tier: 'embedding' },
+
+  // ─── UNCATEGORIZED — long tail ────────────────────────────────
+  { email: 'holds@citylibrary.gov', name: 'Library Notices', domain: 'citylibrary.gov', subject: 'Your hold is ready for pickup', snippet: 'Pick up by Friday.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 1, bodyLength: 290, attachmentNames: [], userLabels: [], expected: 'uncategorized', lang: 'en', tier: 'embedding' },
+  { email: 'tareas@escuelagomez.edu', name: 'Profesor Gomez', domain: 'escuelagomez.edu', subject: 'Tarea de la semana para la clase', snippet: 'Entrega el viernes.', bodyScan: '', toCount: 0, ccCount: 0, threadMsgCount: 1, linkCount: 1, bodyLength: 310, attachmentNames: [], userLabels: [], expected: 'uncategorized', lang: 'es', tier: 'embedding' },
+];
+
+if (typeof module !== 'undefined') module.exports = { MOCK_EMAILS_12 };

@@ -1,0 +1,9 @@
+# clasp push guard — patterns are fallbacks in case rootDir is reverted to ''
+node_modules/**
+tests/**
+categories/**
+*.md
+package.json
+package-lock.json
+npm-install.log
+.gitignore
